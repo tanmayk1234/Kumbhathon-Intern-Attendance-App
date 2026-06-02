@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import AnimatedBackground from "@/components/AnimatedBackground";
 import LocationRadar from "@/components/LocationRadar";
 import PunchButton from "@/components/PunchButton";
-import { getInternId } from "@/lib/storage";
+import { getInternId, clearInternId } from "@/lib/storage";
 import { generateFingerprint } from "@/lib/fingerprint";
 import { haversineDistance } from "@/lib/geo";
 
@@ -80,9 +80,15 @@ export default function PunchPage() {
           hasCheckedOut: data.hasCheckedOut,
           lastAction: data.lastAction 
         });
-      } catch (error) {
-        toast.error("Failed to load your status");
-        console.error(error);
+      } catch (error: any) {
+        if (error.message === "Intern not found") {
+          toast.error("Your ID was removed. Please register again.");
+          clearInternId();
+          router.push("/register");
+        } else {
+          toast.error("Failed to load your status");
+          console.error(error);
+        }
       } finally {
         setLoading(false);
       }
