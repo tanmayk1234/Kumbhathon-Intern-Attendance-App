@@ -394,7 +394,7 @@ export default function PunchPage() {
               />
             )}
           </>
-        )})}
+        )}
 
         {/* Intern ID */}
         {internId && (
