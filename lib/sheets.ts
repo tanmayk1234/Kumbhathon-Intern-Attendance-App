@@ -1,11 +1,22 @@
 import { google } from "googleapis";
 
 function getSheetsClient() {
-  const auth = new google.auth.GoogleAuth({
-    keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+  // Use separate credentials for Vercel, fallback to keyFile for local Windows dev
+  const authOptions: any = {
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
+  };
 
+  if (process.env.GOOGLE_PRIVATE_KEY && process.env.GOOGLE_CLIENT_EMAIL) {
+    authOptions.credentials = {
+      client_email: process.env.GOOGLE_CLIENT_EMAIL,
+      // Handle escaped newlines in the private key from Vercel env
+      private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+    };
+  } else {
+    authOptions.keyFile = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  }
+
+  const auth = new google.auth.GoogleAuth(authOptions);
   return google.sheets({ version: "v4", auth });
 }
 
