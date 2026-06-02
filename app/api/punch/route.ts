@@ -63,14 +63,19 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Generate Log ID: LOG-YYYYMMDD-XXXXXX
+    // Get current time in IST
     const now = new Date();
-    const dateStr = now.toISOString().split("T")[0].replace(/-/g, "");
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(now.getTime() + istOffset);
+    
+    // Generate Log ID: LOG-YYYYMMDD-XXXXXX
+    const date = istDate.toISOString().split("T")[0];
+    const dateStr = date.replace(/-/g, "");
     const logId = `LOG-${dateStr}-${nanoid(6)}`;
 
-    // Format date and time
-    const date = now.toISOString().split("T")[0];
+    // Format time in IST
     const time = now.toLocaleTimeString("en-IN", {
+      timeZone: "Asia/Kolkata",
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
