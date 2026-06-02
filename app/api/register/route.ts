@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { appendIntern, getInternCount } from "@/lib/sheets";
+import { appendIntern, getInternCount, createInternTab } from "@/lib/sheets";
 
 const registerSchema = z.object({
   fullName: z.string().min(3, "Name must be at least 3 characters"),
@@ -59,6 +59,9 @@ export async function POST(request: NextRequest) {
       joiningDate,
       timestamp,
     ]);
+
+    // Create a dedicated tab for the intern
+    await createInternTab(fullName, internId);
 
     return NextResponse.json({
       success: true,

@@ -1,22 +1,21 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
-import { getInterns, getAttendance } from "@/lib/sheets";
+import { getDashboardStats } from "@/lib/sheets";
 
 export async function GET() {
   try {
-    const [internsData, attendanceData] = await Promise.all([
-      getInterns(),
-      getAttendance(),
-    ]);
+    const stats = await getDashboardStats();
 
     // Create workbook
     const workbook = XLSX.utils.book_new();
 
     // Interns sheet
+    const internsData = [stats.internHeaders, ...stats.interns];
     const internsSheet = XLSX.utils.aoa_to_sheet(internsData);
     XLSX.utils.book_append_sheet(workbook, internsSheet, "Interns");
 
     // Attendance sheet
+    const attendanceData = [stats.attendanceHeaders, ...stats.attendance];
     const attendanceSheet = XLSX.utils.aoa_to_sheet(attendanceData);
     XLSX.utils.book_append_sheet(workbook, attendanceSheet, "Attendance");
 

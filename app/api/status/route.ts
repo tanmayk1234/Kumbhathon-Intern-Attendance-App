@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch today's actions
-    const todayActions = await getTodayActions(internId);
+    const todayActions = await getTodayActions(intern);
     const hasCheckedIn = todayActions.some(a => a.type === "CHECK_IN");
     const hasCheckedOut = todayActions.some(a => a.type === "CHECK_OUT");
     const lastAction = todayActions.length > 0 ? todayActions[todayActions.length - 1] : null;

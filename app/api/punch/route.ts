@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { nanoid } from "nanoid";
-import { getInternById, getTodayActions, appendAttendance } from "@/lib/sheets";
+import { getInternById, getTodayActions, logCheckIn, logCheckOut } from "@/lib/sheets";
 
 const punchSchema = z.object({
   internId: z.string().min(1, "Intern ID is required"),
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify no duplicate daily actions
-    const todayActions = await getTodayActions(internId);
+    const todayActions = await getTodayActions(intern);
     const hasCheckedIn = todayActions.some(a => a.type === "CHECK_IN");
     const hasCheckedOut = todayActions.some(a => a.type === "CHECK_OUT");
 
@@ -82,21 +82,37 @@ export async function POST(request: NextRequest) {
       hour12: true,
     });
 
-    // Append to Attendance tab
-    // Headers: Log ID, Intern ID, Full Name, Type, Date, Time,
-    //          Latitude, Longitude, Distance from Office, Device Fingerprint
-    await appendAttendance([
-      logId,
-      internId,
-      intern[1], // Full Name
-      type,
-      date,
-      time,
-      latitude.toString(),
-      longitude.toString(),
-      `${Math.round(distance)}m`,
-      fingerprint,
-    ]);
+    const tabName = `${intern[1]} (${internId})`;
+    const gps = `${latitude.toFixed(6)}, ${longitude.toFixed(6)} (${Math.round(distance)}m)`;
+
+    if (type === "CHECK_IN") {
+      await logCheckIn(tabName, date, time, gps);
+    } else {
+      // Find check-in time to calculate hours
+      const checkInAction = todayActions.find((a) => a.type === "CHECK_IN");
+      let totalHours = "Unknown";
+      if (checkInAction && checkInAction.time) {
+        const parseTime = (str: string) => {
+          const parts = str.trim().split(" ");
+          const timeStr = parts[0];
+          const modifier = parts[1] || "";
+          
+          let [hours, minutes, seconds] = timeStr.split(":").map(Number);
+          if (hours === 12) {
+            hours = modifier.toUpperCase() === "AM" ? 0 : 12;
+          } else if (modifier.toUpperCase() === "PM") {
+            hours += 12;
+          }
+          return (hours || 0) * 3600 + (minutes || 0) * 60 + (seconds || 0);
+        };
+        const inSeconds = parseTime(checkInAction.time);
+        const outSeconds = parseTime(time);
+        const diffHours = (outSeconds - inSeconds) / 3600;
+        totalHours = diffHours.toFixed(2) + " hrs";
+      }
+      
+      await logCheckOut(tabName, date, time, gps, totalHours);
+    }
 
     return NextResponse.json({
       success: true,

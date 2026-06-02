@@ -97,106 +97,203 @@ export async function appendIntern(values: string[]): Promise<void> {
   invalidateCache("interns");
 }
 
-// ── Attendance Tab ──
+// ── Intern Specific Tabs ──
 
-export async function getAttendance(): Promise<string[][]> {
-  const cached = getCached<string[][]>("attendance");
-  if (cached) return cached;
-
+export async function createInternTab(fullName: string, internId: string): Promise<void> {
   const sheets = getSheetsClient();
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: "Attendance!A:J",
-  });
-  const data = response.data.values || [];
-  setCache("attendance", data);
-  return data;
+  const title = `${fullName} (${internId})`;
+
+  try {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: {
+        requests: [
+          {
+            addSheet: {
+              properties: {
+                title: title,
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `'${title}'!A1:F1`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [
+          ["Date", "Check In Time", "Check Out Time", "Total Hours", "Check In GPS", "Check Out GPS"],
+        ],
+      },
+    });
+  } catch (error: any) {
+    console.error("Error creating intern tab. It may already exist:", error.message);
+  }
 }
 
-export async function getAttendanceForIntern(
-  internId: string
-): Promise<string[][]> {
-  const rows = await getAttendance();
-  return rows.filter((row, index) => index > 0 && row[1] === internId);
+export async function getInternAttendance(internTabName: string): Promise<string[][]> {
+  const sheets = getSheetsClient();
+  try {
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `'${internTabName}'!A:F`,
+    });
+    return response.data.values || [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export async function logCheckIn(
+  internTabName: string, 
+  date: string, 
+  time: string, 
+  gps: string
+): Promise<void> {
+  const sheets = getSheetsClient();
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `'${internTabName}'!A:F`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [[date, time, "", "", gps, ""]],
+    },
+  });
+}
+
+export async function logCheckOut(
+  internTabName: string,
+  date: string,
+  time: string,
+  gps: string,
+  totalHours: string
+): Promise<void> {
+  const rows = await getInternAttendance(internTabName);
+  const rowIndex = rows.findIndex((row) => row[0] === date);
+  
+  if (rowIndex === -1) {
+    throw new Error("No check-in found for today");
+  }
+
+  const sheetRow = rowIndex + 1;
+  const sheets = getSheetsClient();
+
+  const rowToUpdate = [...rows[rowIndex]];
+  rowToUpdate[2] = time; // Check Out Time
+  rowToUpdate[3] = totalHours; // Total Hours
+  rowToUpdate[5] = gps; // Check Out GPS
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `'${internTabName}'!A${sheetRow}:F${sheetRow}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [rowToUpdate],
+    },
+  });
 }
 
 export async function getTodayActions(
-  internId: string
+  intern: string[] // [internId, fullName, ...]
 ): Promise<{ type: string; time: string; date: string }[]> {
-  const rows = await getAttendanceForIntern(internId);
+  if (!intern || intern.length < 2) return [];
+  const tabName = `${intern[1]} (${intern[0]})`;
+
+  const rows = await getInternAttendance(tabName);
   if (rows.length === 0) return [];
 
-  // Get today's date in YYYY-MM-DD format (IST)
   const now = new Date();
   const istOffset = 5.5 * 60 * 60 * 1000;
   const istDate = new Date(now.getTime() + istOffset);
   const today = istDate.toISOString().split("T")[0];
 
-  // Filter to today's entries
-  const todayRows = rows.filter((row) => row[4] === today);
-  
-  return todayRows.map(row => ({
-    type: row[3], // CHECK_IN or CHECK_OUT
-    time: row[5], // Time
-    date: row[4], // Date
-  }));
-}
+  const todayRow = rows.find((row) => row[0] === today);
+  if (!todayRow) return [];
 
-export async function appendAttendance(values: string[]): Promise<void> {
-  const sheets = getSheetsClient();
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SPREADSHEET_ID,
-    range: "Attendance!A:J",
-    valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [values],
-    },
-  });
-  // Invalidate cache after write
-  invalidateCache("attendance");
+  const actions = [];
+  if (todayRow[1]) {
+    actions.push({ type: "CHECK_IN", time: todayRow[1], date: today });
+  }
+  if (todayRow[2]) {
+    actions.push({ type: "CHECK_OUT", time: todayRow[2], date: today });
+  }
+  return actions;
 }
 
 // ── Stats Helpers ──
 
 export async function getDashboardStats() {
-  const [interns, attendance] = await Promise.all([
-    getInterns(),
-    getAttendance(),
-  ]);
+  const interns = await getInterns();
+  const internRows = interns.slice(1); // Skip header
 
-  // Use IST for today's date
   const now = new Date();
   const istOffset = 5.5 * 60 * 60 * 1000;
   const istDate = new Date(now.getTime() + istOffset);
   const today = istDate.toISOString().split("T")[0];
 
-  const internRows = interns.slice(1); // Skip header
-  const attendanceRows = attendance.slice(1); // Skip header
+  let todayCheckIns = 0;
+  let currentlyInside = 0;
+  const allRecentAttendance: string[][] = [];
 
-  // Today's entries
-  const todayEntries = attendanceRows.filter((row) => row[4] === today);
+  // Fetch all intern tabs concurrently
+  await Promise.all(
+    internRows.map(async (intern) => {
+      const tabName = `${intern[1]} (${intern[0]})`;
+      const rows = await getInternAttendance(tabName);
+      
+      if (rows.length > 1) { // has data beyond header
+        const todayRow = rows.find(r => r[0] === today);
+        if (todayRow && todayRow[1]) {
+          todayCheckIns++;
+          if (!todayRow[2]) {
+            // Checked in but not checked out
+            currentlyInside++;
+          }
+        }
 
-  // Count today's check-ins
-  const todayCheckIns = todayEntries.filter(
-    (row) => row[3] === "CHECK_IN"
-  ).length;
+        // Add recent rows to a unified list (last 10 rows per intern)
+        // Format them like the old attendance sheet for the dashboard display
+        // Old Format: [Log ID, Intern ID, Full Name, Type, Date, Time, Lat, Lng, Dist, Fingerprint]
+        const recentRows = rows.slice(-10).reverse();
+        for (const r of recentRows) {
+          if (r[0] === "Date") continue; // Skip header
+          
+          if (r[2]) {
+             allRecentAttendance.push([
+               `LOG-${r[0]}-OUT`, intern[0], intern[1], "CHECK_OUT", r[0], r[2], "", "", "", ""
+             ]);
+          }
+          if (r[1]) {
+             allRecentAttendance.push([
+               `LOG-${r[0]}-IN`, intern[0], intern[1], "CHECK_IN", r[0], r[1], r[4] || "", "", "", ""
+             ]);
+          }
+        }
+      }
+    })
+  );
 
-  // Currently inside: interns whose last action today is CHECK_IN
-  const lastActionByIntern = new Map<string, string>();
-  for (const row of todayEntries) {
-    lastActionByIntern.set(row[1], row[3]);
-  }
-  const currentlyInside = Array.from(lastActionByIntern.values()).filter(
-    (action) => action === "CHECK_IN"
-  ).length;
+  // Sort unified attendance by date/time descending
+  allRecentAttendance.sort((a, b) => {
+    // combine date and time string
+    const timeA = new Date(`${a[4]} ${a[5]}`).getTime();
+    const timeB = new Date(`${b[4]} ${b[5]}`).getTime();
+    return timeB - timeA;
+  });
 
   return {
     totalInterns: internRows.length,
     todayCheckIns,
     currentlyInside,
     interns: internRows,
-    attendance: attendanceRows.reverse(), // Reverse chronological
+    attendance: allRecentAttendance.slice(0, 100), // Send last 100 events
     internHeaders: interns[0] || [],
-    attendanceHeaders: attendance[0] || [],
+    attendanceHeaders: [
+      "Log ID", "Intern ID", "Full Name", "Type", "Date", "Time", 
+      "Latitude", "Longitude", "Distance from Office", "Device Fingerprint"
+    ],
   };
 }
